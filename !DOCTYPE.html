@@ -27,11 +27,17 @@
             max-width: 400px;
             height: auto;
             border-radius: 8px;
+            display: block;
+            margin: 0 auto;
         }
         
         .scanner-container {
             position: relative;
-            display: inline-block;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            min-height: 300px;
         }
         
         .scanner-overlay {
@@ -44,6 +50,7 @@
             border: 3px solid #5D5CDE;
             border-radius: 12px;
             pointer-events: none;
+            z-index: 10;
         }
 
         .scanner-overlay::before {
@@ -63,15 +70,12 @@
             50% { opacity: 0.3; }
         }
 
-        .drag-area {
-            border: 3px dashed #5D5CDE;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-        }
-        
-        .drag-area.dragover {
-            border-color: #4338ca;
-            background-color: rgba(93, 92, 222, 0.1);
+        .camera-instructions {
+            text-align: center;
+            padding: 20px;
+            background: rgba(93, 92, 222, 0.1);
+            border-radius: 8px;
+            margin-bottom: 16px;
         }
     </style>
 </head>
@@ -114,17 +118,13 @@
                     </div>
                 </div>
 
-                <!-- Image Upload Fallback -->
-                <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-3 text-center">或上傳QR code圖片</p>
-                    <div class="drag-area p-6 text-center" id="dragArea">
-                        <div class="text-3xl mb-2">📷</div>
-                        <p class="text-gray-600 dark:text-gray-400 mb-3">拖放圖片或點擊選擇</p>
-                        <input type="file" id="qrImageInput" accept="image/*" class="hidden">
-                        <button onclick="document.getElementById('qrImageInput').click()" 
-                                class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors">
-                            選擇圖片
-                        </button>
+                <!-- Camera Instructions -->
+                <div class="camera-instructions" id="cameraInstructions">
+                    <div class="text-lg font-medium mb-2">📷 使用說明</div>
+                    <div class="text-sm text-gray-600 dark:text-gray-400">
+                        <p>1. 點擊「啟動相機掃描」開始使用</p>
+                        <p>2. 將教具上的QR code對準掃描框</p>
+                        <p>3. 系統會自動識別並記錄點存</p>
                     </div>
                 </div>
 
@@ -356,18 +356,6 @@
                 document.getElementById('startCameraBtn').addEventListener('click', () => this.startCamera());
                 document.getElementById('stopCameraBtn').addEventListener('click', () => this.stopCamera());
                 document.getElementById('switchCameraBtn').addEventListener('click', () => this.switchCamera());
-
-                // Image upload
-                const qrImageInput = document.getElementById('qrImageInput');
-                const dragArea = document.getElementById('dragArea');
-                
-                qrImageInput.addEventListener('change', (e) => this.handleImageUpload(e));
-                
-                // Drag and drop
-                dragArea.addEventListener('click', () => qrImageInput.click());
-                dragArea.addEventListener('dragover', (e) => this.handleDragOver(e));
-                dragArea.addEventListener('dragleave', () => this.handleDragLeave());
-                dragArea.addEventListener('drop', (e) => this.handleDrop(e));
             }
 
             async getCameraDevices() {
@@ -622,46 +610,7 @@
                 }
             }
 
-            handleImageUpload(event) {
-                const file = event.target.files[0];
-                if (file) {
-                    this.processImageFile(file);
-                }
-            }
 
-            handleDragOver(event) {
-                event.preventDefault();
-                document.getElementById('dragArea').classList.add('dragover');
-            }
-
-            handleDragLeave() {
-                document.getElementById('dragArea').classList.remove('dragover');
-            }
-
-            handleDrop(event) {
-                event.preventDefault();
-                document.getElementById('dragArea').classList.remove('dragover');
-                
-                const files = event.dataTransfer.files;
-                if (files.length > 0) {
-                    this.processImageFile(files[0]);
-                }
-            }
-
-            async processImageFile(file) {
-                if (!file.type.startsWith('image/')) {
-                    MessageHandler.show('請選擇圖片檔案', 'error');
-                    return;
-                }
-
-                try {
-                    const result = await QrScanner.scanImage(file);
-                    this.handleScanResult(result);
-                } catch (error) {
-                    console.error('QR scan failed:', error);
-                    MessageHandler.show('無法識別QR Code，請確認圖片清晰度', 'error');
-                }
-            }
 
             handleScanResult(result) {
                 const qrData = typeof result === 'string' ? result : result.data;
