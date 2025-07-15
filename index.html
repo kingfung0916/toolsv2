@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教具點存系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/qr-scanner@1.4.2/qr-scanner.umd.min.js"></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#5D5CDE',
+                        secondary: '#f3f4f6'
+                    }
+                }
+            },
+            darkMode: 'class'
+        }
+    </script>
+    <style>
+        /* QR Scanner Styles */
+        #qr-video {
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            border-radius: 8px;
+        }
+        
+        .scanner-container {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .scanner-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 200px;
+            border: 3px solid #5D5CDE;
+            border-radius: 12px;
+            pointer-events: none;
+        }
+
+        .scanner-overlay::before {
+            content: '';
+            position: absolute;
+            top: -3px;
+            left: -3px;
+            right: -3px;
+            bottom: -3px;
+            border: 3px solid rgba(93, 92, 222, 0.3);
+            border-radius: 12px;
+            animation: scanner-pulse 2s infinite;
+        }
+
+        @keyframes scanner-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .drag-area {
+            border: 3px dashed #5D5CDE;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .drag-area.dragover {
+            border-color: #4338ca;
+            background-color: rgba(93, 92, 222, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen">
+    <!-- Main Container -->
+    <div class="container mx-auto px-4 py-6 max-w-6xl">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-primary mb-2">📋 教具點存系統</h1>
+            <p class="text-gray-600 dark:text-gray-400">掃描QR code進行教具點存管理</p>
+        </header>
+
+        <!-- Main Content Grid -->
+        <div class="grid lg:grid-cols-2 gap-6 mb-8">
+            <!-- QR Scanner Section -->
+            <section class="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold flex items-center">
+                        <span class="text-2xl mr-2">📱</span>
+                        QR Code 掃描
+                    </h2>
+                    <button id="switchCameraBtn" class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600 hidden">
+                        切換相機
+                    </button>
+                </div>
+                
+                <!-- Camera Scanner -->
+                <div id="cameraSection" class="mb-4">
+                    <div class="scanner-container text-center mb-4">
+                        <video id="qr-video" class="hidden"></video>
+                        <div class="scanner-overlay hidden"></div>
+                    </div>
+                    <div class="flex justify-center space-x-3">
+                        <button id="startCameraBtn" class="bg-primary text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                            📷 啟動相機掃描
+                        </button>
+                        <button id="stopCameraBtn" class="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors hidden">
+                            ⏹️ 停止掃描
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Image Upload Fallback -->
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-3 text-center">或上傳QR code圖片</p>
+                    <div class="drag-area p-6 text-center" id="dragArea">
+                        <div class="text-3xl mb-2">📷</div>
+                        <p class="text-gray-600 dark:text-gray-400 mb-3">拖放圖片或點擊選擇</p>
+                        <input type="file" id="qrImageInput" accept="image/*" class="hidden">
+                        <button onclick="document.getElementById('qrImageInput').click()" 
+                                class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors">
+                            選擇圖片
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scan Result -->
+                <div id="scanResult" class="hidden mt-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                    <h3 class="font-semibold text-green-800 dark:text-green-400 mb-2">掃描結果：</h3>
+                    <p id="scanResultText" class="text-green-700 dark:text-green-300 break-all"></p>
+                </div>
+            </section>
+
+            <!-- CSV Management Section -->
+            <section class="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+                <h2 class="text-xl font-semibold mb-4 flex items-center">
+                    <span class="text-2xl mr-2">📄</span>
+                    CSV 資料管理
+                </h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2">匯入教具清單</label>
+                        <input type="file" id="csvInput" accept=".csv" 
+                               class="w-full text-base px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">CSV格式：編號,教具名稱</p>
+                    </div>
+                    
+                    <button id="exportBtn" 
+                            class="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors">
+                        📥 匯出點存記錄
+                    </button>
+                    
+                    <button id="clearRecordsBtn" 
+                            class="w-full bg-orange-600 text-white py-2 px-4 rounded-lg hover:bg-orange-700 transition-colors">
+                        🗑️ 清空點存記錄
+                    </button>
+
+                    <button id="clearAllBtn" 
+                            class="w-full bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors">
+                        ❌ 清空所有資料
+                    </button>
+                </div>
+            </section>
+        </div>
+
+        <!-- Tools List Section -->
+        <section class="bg-gray-50 dark:bg-gray-800 rounded-lg p-6 mb-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold flex items-center">
+                    <span class="text-2xl mr-2">📋</span>
+                    教具清單
+                </h2>
+                <span class="text-sm text-gray-600 dark:text-gray-400">
+                    總計：<span id="totalCount" class="font-semibold">0</span> 件
+                </span>
+            </div>
+
+            <!-- Search -->
+            <div class="mb-4">
+                <input type="text" id="searchInput" placeholder="搜尋教具名稱或編號..." 
+                       class="w-full text-base px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
+            </div>
+
+            <!-- Tools Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr class="bg-gray-100 dark:bg-gray-700">
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">編號</th>
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">教具名稱</th>
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">點存次數</th>
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">最後點存時間</th>
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="toolsList">
+                        <tr>
+                            <td colspan="5" class="border border-gray-300 dark:border-gray-600 px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                尚無教具資料，請匯入CSV檔案
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Attendance Records Section -->
+        <section class="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+            <h2 class="text-xl font-semibold mb-4 flex items-center">
+                <span class="text-2xl mr-2">📊</span>
+                點存記錄
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr class="bg-gray-100 dark:bg-gray-700">
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">時間</th>
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">教具編號</th>
+                            <th class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-left">教具名稱</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attendanceList">
+                        <tr>
+                            <td colspan="3" class="border border-gray-300 dark:border-gray-600 px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                尚無點存記錄
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // === Configuration ===
+        const CONFIG = {
+            QR_SCANNER_OPTIONS: {
+                returnDetailedScanResult: true,
+                highlightScanRegion: true,
+                highlightCodeOutline: true,
+            }
+        };
+
+        // === State Management ===
+        class AppState {
+            constructor() {
+                this.tools = [];
+                this.attendanceRecords = [];
+                this.scanner = null;
+                this.isScanning = false;
+            }
+
+            // Tools management
+            setTools(tools) {
+                this.tools = tools;
+                this.renderToolsList();
+            }
+
+            findTool(id) {
+                return this.tools.find(tool => tool.id === id);
+            }
+
+            // Attendance management
+            addAttendanceRecord(toolId, toolName) {
+                const record = {
+                    timestamp: new Date().toLocaleString('zh-TW'),
+                    toolId: toolId,
+                    toolName: toolName
+                };
+                
+                this.attendanceRecords.unshift(record);
+                
+                // Update tool's attendance count
+                const tool = this.findTool(toolId);
+                if (tool) {
+                    tool.attendanceCount = (tool.attendanceCount || 0) + 1;
+                    tool.lastAttendance = record.timestamp;
+                }
+
+                this.renderToolsList();
+                this.renderAttendanceList();
+            }
+
+            clearAttendanceRecords() {
+                this.attendanceRecords = [];
+                // Reset tools attendance data
+                this.tools.forEach(tool => {
+                    tool.attendanceCount = 0;
+                    tool.lastAttendance = '';
+                });
+                this.renderToolsList();
+                this.renderAttendanceList();
+            }
+
+            clearAll() {
+                this.tools = [];
+                this.attendanceRecords = [];
+                this.renderToolsList();
+                this.renderAttendanceList();
+            }
+
+            // Rendering methods
+            renderToolsList(searchTerm = '') {
+                ToolsListRenderer.render(this.tools, searchTerm);
+            }
+
+            renderAttendanceList() {
+                AttendanceRenderer.render(this.attendanceRecords);
+            }
+        }
+
+        // === QR Scanner Module ===
+        class QRScannerModule {
+            constructor(appState) {
+                this.appState = appState;
+                this.scanner = null;
+                this.isScanning = false;
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                // Camera controls
+                document.getElementById('startCameraBtn').addEventListener('click', () => this.startCamera());
+                document.getElementById('stopCameraBtn').addEventListener('click', () => this.stopCamera());
+                document.getElementById('switchCameraBtn').addEventListener('click', () => this.switchCamera());
+
+                // Image upload
+                const qrImageInput = document.getElementById('qrImageInput');
+                const dragArea = document.getElementById('dragArea');
+                
+                qrImageInput.addEventListener('change', (e) => this.handleImageUpload(e));
+                
+                // Drag and drop
+                dragArea.addEventListener('click', () => qrImageInput.click());
+                dragArea.addEventListener('dragover', (e) => this.handleDragOver(e));
+                dragArea.addEventListener('dragleave', () => this.handleDragLeave());
+                dragArea.addEventListener('drop', (e) => this.handleDrop(e));
+            }
+
+            async startCamera() {
+                try {
+                    const video = document.getElementById('qr-video');
+                    const overlay = document.querySelector('.scanner-overlay');
+                    const startBtn = document.getElementById('startCameraBtn');
+                    const stopBtn = document.getElementById('stopCameraBtn');
+                    const switchBtn = document.getElementById('switchCameraBtn');
+
+                    this.scanner = new QrScanner(
+                        video,
+                        (result) => this.handleScanResult(result),
+                        CONFIG.QR_SCANNER_OPTIONS
+                    );
+
+                    await this.scanner.start();
+                    
+                    // Update UI
+                    video.classList.remove('hidden');
+                    overlay.classList.remove('hidden');
+                    startBtn.classList.add('hidden');
+                    stopBtn.classList.remove('hidden');
+                    switchBtn.classList.remove('hidden');
+                    
+                    this.isScanning = true;
+                    MessageHandler.show('相機已啟動，請將QR code對準掃描區域', 'success');
+                    
+                } catch (error) {
+                    console.error('Camera access failed:', error);
+                    MessageHandler.show('無法啟動相機，請檢查權限設定或使用圖片上傳功能', 'error');
+                }
+            }
+
+            stopCamera() {
+                if (this.scanner) {
+                    this.scanner.stop();
+                    this.scanner.destroy();
+                    this.scanner = null;
+                }
+
+                // Update UI
+                const video = document.getElementById('qr-video');
+                const overlay = document.querySelector('.scanner-overlay');
+                const startBtn = document.getElementById('startCameraBtn');
+                const stopBtn = document.getElementById('stopCameraBtn');
+                const switchBtn = document.getElementById('switchCameraBtn');
+
+                video.classList.add('hidden');
+                overlay.classList.add('hidden');
+                startBtn.classList.remove('hidden');
+                stopBtn.classList.add('hidden');
+                switchBtn.classList.add('hidden');
+
+                this.isScanning = false;
+                MessageHandler.show('相機已停止', 'info');
+            }
+
+            async switchCamera() {
+                if (this.scanner) {
+                    try {
+                        await this.scanner.setCamera('environment');
+                        MessageHandler.show('已切換相機', 'info');
+                    } catch (error) {
+                        console.error('Switch camera failed:', error);
+                        MessageHandler.show('切換相機失敗', 'error');
+                    }
+                }
+            }
+
+            handleImageUpload(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    this.processImageFile(file);
+                }
+            }
+
+            handleDragOver(event) {
+                event.preventDefault();
+                document.getElementById('dragArea').classList.add('dragover');
+            }
+
+            handleDragLeave() {
+                document.getElementById('dragArea').classList.remove('dragover');
+            }
+
+            handleDrop(event) {
+                event.preventDefault();
+                document.getElementById('dragArea').classList.remove('dragover');
+                
+                const files = event.dataTransfer.files;
+                if (files.length > 0) {
+                    this.processImageFile(files[0]);
+                }
+            }
+
+            async processImageFile(file) {
+                if (!file.type.startsWith('image/')) {
+                    MessageHandler.show('請選擇圖片檔案', 'error');
+                    return;
+                }
+
+                try {
+                    const result = await QrScanner.scanImage(file);
+                    this.handleScanResult(result);
+                } catch (error) {
+                    console.error('QR scan failed:', error);
+                    MessageHandler.show('無法識別QR Code，請確認圖片清晰度', 'error');
+                }
+            }
+
+            handleScanResult(result) {
+                const qrData = typeof result === 'string' ? result : result.data;
+                
+                // Display result
+                document.getElementById('scanResultText').textContent = qrData;
+                document.getElementById('scanResult').classList.remove('hidden');
+                
+                // Process the scan
+                AttendanceProcessor.process(qrData.trim(), this.appState);
+            }
+        }
+
+        // === CSV Module ===
+        class CSVModule {
+            constructor(appState) {
+                this.appState = appState;
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                document.getElementById('csvInput').addEventListener('change', (e) => this.handleImport(e));
+                document.getElementById('exportBtn').addEventListener('click', () => this.exportAttendance());
+                document.getElementById('clearRecordsBtn').addEventListener('click', () => this.clearRecords());
+                document.getElementById('clearAllBtn').addEventListener('click', () => this.clearAll());
+            }
+
+            handleImport(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: (results) => {
+                        if (results.errors.length > 0) {
+                            MessageHandler.show('CSV檔案格式錯誤', 'error');
+                            return;
+                        }
+
+                        const tools = results.data
+                            .map(row => ({
+                                id: (row.編號 || row.id || '').toString().trim(),
+                                name: (row.教具名稱 || row.name || '').toString().trim(),
+                                attendanceCount: 0,
+                                lastAttendance: ''
+                            }))
+                            .filter(tool => tool.id && tool.name);
+
+                        this.appState.setTools(tools);
+                        MessageHandler.show(`成功匯入 ${tools.length} 件教具`, 'success');
+                    },
+                    error: (error) => {
+                        console.error('CSV parse error:', error);
+                        MessageHandler.show('讀取CSV檔案失敗', 'error');
+                    }
+                });
+            }
+
+            exportAttendance() {
+                if (this.appState.attendanceRecords.length === 0) {
+                    MessageHandler.show('沒有點存記錄可以匯出', 'error');
+                    return;
+                }
+
+                const csvData = this.appState.attendanceRecords.map(record => ({
+                    時間: record.timestamp,
+                    教具編號: record.toolId,
+                    教具名稱: record.toolName
+                }));
+
+                const csv = Papa.unparse(csvData);
+                this.downloadCSV(csv, `點存記錄_${new Date().toISOString().split('T')[0]}.csv`);
+                MessageHandler.show('點存記錄已下載', 'success');
+            }
+
+            clearRecords() {
+                if (this.showConfirmDialog('確定要清空所有點存記錄嗎？教具清單將保留。')) {
+                    this.appState.clearAttendanceRecords();
+                    MessageHandler.show('點存記錄已清空', 'success');
+                }
+            }
+
+            clearAll() {
+                if (this.showConfirmDialog('確定要清空所有資料嗎？此操作無法復原。')) {
+                    this.appState.clearAll();
+                    MessageHandler.show('所有資料已清空', 'success');
+                }
+            }
+
+            downloadCSV(csvContent, filename) {
+                const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+
+            showConfirmDialog(message) {
+                return confirm(message);
+            }
+        }
+
+        // === Attendance Processor ===
+        class AttendanceProcessor {
+            static process(qrData, appState) {
+                const toolId = qrData;
+                const tool = appState.findTool(toolId);
+
+                if (tool) {
+                    appState.addAttendanceRecord(toolId, tool.name);
+                    MessageHandler.show(`✅ ${tool.name} 點存成功`, 'success');
+                } else {
+                    MessageHandler.show(`❌ 找不到編號為 "${toolId}" 的教具`, 'error');
+                }
+            }
+        }
+
+        // === Renderers ===
+        class ToolsListRenderer {
+            static render(tools, searchTerm = '') {
+                const toolsList = document.getElementById('toolsList');
+                const totalCount = document.getElementById('totalCount');
+
+                let filteredTools = tools;
+                if (searchTerm) {
+                    filteredTools = tools.filter(tool => 
+                        tool.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        tool.name.toLowerCase().includes(searchTerm.toLowerCase())
+                    );
+                }
+
+                totalCount.textContent = filteredTools.length;
+
+                if (filteredTools.length === 0) {
+                    toolsList.innerHTML = `
+                        <tr>
+                            <td colspan="5" class="border border-gray-300 dark:border-gray-600 px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                ${searchTerm ? '找不到符合條件的教具' : '尚無教具資料，請匯入CSV檔案'}
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                toolsList.innerHTML = filteredTools.map(tool => `
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3 font-mono">${tool.id}</td>
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3">${tool.name}</td>
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-center">
+                            <span class="px-2 py-1 rounded-full text-sm font-medium ${
+                                (tool.attendanceCount || 0) > 0 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 
+                                'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+                            }">
+                                ${tool.attendanceCount || 0}
+                            </span>
+                        </td>
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm">
+                            ${tool.lastAttendance || '-'}
+                        </td>
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3">
+                            <button onclick="attendanceProcessor.process('${tool.id}', appState)" 
+                                    class="bg-primary text-white px-3 py-1 rounded text-xs hover:bg-blue-600 transition-colors">
+                                📝 手動點存
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        class AttendanceRenderer {
+            static render(records) {
+                const attendanceList = document.getElementById('attendanceList');
+
+                if (records.length === 0) {
+                    attendanceList.innerHTML = `
+                        <tr>
+                            <td colspan="3" class="border border-gray-300 dark:border-gray-600 px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                尚無點存記錄
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                attendanceList.innerHTML = records.slice(0, 20).map(record => `
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm">${record.timestamp}</td>
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3 font-mono">${record.toolId}</td>
+                        <td class="border border-gray-300 dark:border-gray-600 px-4 py-3">${record.toolName}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        // === Message Handler ===
+        class MessageHandler {
+            static show(message, type = 'info') {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `fixed top-4 right-4 px-6 py-3 rounded-lg text-white z-50 shadow-lg ${
+                    type === 'success' ? 'bg-green-500' :
+                    type === 'error' ? 'bg-red-500' : 'bg-blue-500'
+                }`;
+                messageDiv.textContent = message;
+                
+                document.body.appendChild(messageDiv);
+                
+                setTimeout(() => {
+                    if (messageDiv.parentNode) {
+                        messageDiv.parentNode.removeChild(messageDiv);
+                    }
+                }, 3000);
+            }
+        }
+
+        // === Theme Management ===
+        function initializeTheme() {
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.documentElement.classList.add('dark');
+            }
+            
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
+                if (event.matches) {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
+            });
+        }
+
+        // === Search Functionality ===
+        function setupSearch(appState) {
+            const searchInput = document.getElementById('searchInput');
+            searchInput.addEventListener('input', (e) => {
+                const searchTerm = e.target.value;
+                appState.renderToolsList(searchTerm);
+            });
+        }
+
+        // === Application Initialization ===
+        let appState;
+        let qrScannerModule;
+        let csvModule;
+        let attendanceProcessor;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize theme
+            initializeTheme();
+            
+            // Initialize application state
+            appState = new AppState();
+            
+            // Initialize modules
+            qrScannerModule = new QRScannerModule(appState);
+            csvModule = new CSVModule(appState);
+            attendanceProcessor = AttendanceProcessor;
+            
+            // Setup search
+            setupSearch(appState);
+            
+            // Load sample data for demonstration
+            loadSampleData();
+            
+            console.log('📋 教具點存系統已初始化');
+        });
+
+        // === Sample Data ===
+        function loadSampleData() {
+            if (appState.tools.length === 0) {
+                const sampleTools = [
+                    { id: 'T001', name: '顯微鏡', attendanceCount: 0, lastAttendance: '' },
+                    { id: 'T002', name: '投影機', attendanceCount: 0, lastAttendance: '' },
+                    { id: 'T003', name: '數學教具組', attendanceCount: 0, lastAttendance: '' },
+                    { id: 'T004', name: '體感器材', attendanceCount: 0, lastAttendance: '' }
+                ];
+                appState.setTools(sampleTools);
+            }
+        }
+    </script>
+</body>
+</html>
