@@ -321,7 +321,34 @@
                 this.appState = appState;
                 this.scanner = null;
                 this.isScanning = false;
+                this.cameras = [];
+                this.currentCameraIndex = 0;
+                this.checkCameraSupport();
                 this.setupEventListeners();
+            }
+
+            checkCameraSupport() {
+                // 檢查瀏覽器是否支援相機
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    console.warn('Camera not supported in this environment');
+                    this.hideCameraControls();
+                    return false;
+                }
+
+                // 檢查是否在安全環境中 (HTTPS or localhost)
+                if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                    console.warn('Camera requires HTTPS or localhost');
+                    MessageHandler.show('相機功能需要HTTPS環境，請使用圖片上傳功能', 'error');
+                    this.hideCameraControls();
+                    return false;
+                }
+
+                return true;
+            }
+
+            hideCameraControls() {
+                document.getElementById('cameraSection').style.display = 'none';
+                MessageHandler.show('當前環境不支援相機，請使用圖片上傳功能', 'info');
             }
 
             setupEventListeners() {
@@ -343,71 +370,255 @@
                 dragArea.addEventListener('drop', (e) => this.handleDrop(e));
             }
 
-            async startCamera() {
+            async getCameraDevices() {
                 try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    this.cameras = devices.filter(device => device.kind === 'videoinput');
+                    console.log('Available cameras:', this.cameras.length);
+                    return this.cameras;
+                } catch (error) {
+                    console.error('Failed to enumerate cameras:', error);
+                    return [];
+                }
+            }
+
+            async checkCameraPermission() {
+                try {
+                    // 檢查相機權限狀態
+                    const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+                    console.log('Camera permission status:', permissionStatus.state);
+                    return permissionStatus.state;
+                } catch (error) {
+                    console.warn('Cannot check camera permission status:', error);
+                    return 'unknown';
+                }
+            }
+
+            async requestCameraPermission() {
+                try {
+                    // 請求相機權限，使用基本設定以提高成功率
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            width: { ideal: 640 },
+                            height: { ideal: 480 }
+                        } 
+                    });
+                    
+                    // 立即停止所有軌道
+                    stream.getTracks().forEach(track => {
+                        track.stop();
+                    });
+                    
+                    return true;
+                } catch (error) {
+                    console.error('Permission request failed:', error);
+                    throw error;
+                }
+            }
+
+            async startCamera() {
+                if (!this.checkCameraSupport()) {
+                    return;
+                }
+
+                const startBtn = document.getElementById('startCameraBtn');
+                const stopBtn = document.getElementById('stopCameraBtn');
+                const switchBtn = document.getElementById('switchCameraBtn');
+
+                try {
+                    // 顯示載入狀態
+                    startBtn.textContent = '📷 啟動中...';
+                    startBtn.disabled = true;
+
+                    // 檢查權限狀態
+                    const permissionState = await this.checkCameraPermission();
+                    
+                    if (permissionState === 'denied') {
+                        throw new Error('Camera permission denied');
+                    }
+
+                    // 如果權限未知或需要請求，先請求權限
+                    if (permissionState === 'prompt' || permissionState === 'unknown') {
+                        MessageHandler.show('正在請求相機權限...', 'info');
+                        await this.requestCameraPermission();
+                    }
+
+                    // 獲取相機設備列表
+                    await this.getCameraDevices();
+
+                    const video = document.getElementById('qr-video');
+                    const overlay = document.querySelector('.scanner-overlay');
+
+                    // 創建QR掃描器，讓它處理相機啟動
+                    this.scanner = new QrScanner(
+                        video,
+                        (result) => this.handleScanResult(result),
+                        {
+                            returnDetailedScanResult: true,
+                            highlightScanRegion: true,
+                            highlightCodeOutline: true,
+                            preferredCamera: 'environment',
+                            maxScansPerSecond: 5,
+                            highlightScanRegion: true
+                        }
+                    );
+
+                    // 啟動掃描器
+                    await this.scanner.start();
+                    
+                    // 更新界面
+                    video.classList.remove('hidden');
+                    overlay.classList.remove('hidden');
+                    startBtn.classList.add('hidden');
+                    stopBtn.classList.remove('hidden');
+                    
+                    // 只有多個相機時才顯示切換按鈕
+                    if (this.cameras.length > 1) {
+                        switchBtn.classList.remove('hidden');
+                    }
+                    
+                    this.isScanning = true;
+                    MessageHandler.show('✅ 相機已啟動！請將QR code對準掃描區域', 'success');
+                    
+                } catch (error) {
+                    console.error('Camera start failed:', error);
+                    
+                    // 重置按鈕狀態
+                    startBtn.textContent = '📷 啟動相機掃描';
+                    startBtn.disabled = false;
+                    
+                    // 詳細錯誤處理
+                    this.handleCameraError(error);
+                }
+            }
+
+            handleCameraError(error) {
+                let errorMessage = '無法啟動相機';
+                let showPermissionHelp = false;
+                
+                if (error.name === 'NotAllowedError' || error.message === 'Camera permission denied') {
+                    errorMessage = '❌ 相機權限被拒絕';
+                    showPermissionHelp = true;
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage = '❌ 找不到可用的相機設備';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage = '❌ 相機被其他應用程式佔用，請關閉其他相機應用';
+                } else if (error.name === 'OverconstrainedError') {
+                    errorMessage = '❌ 相機不支援所需的設定';
+                } else if (error.name === 'SecurityError') {
+                    errorMessage = '❌ 安全限制：需要HTTPS環境';
+                } else if (error.name === 'AbortError') {
+                    errorMessage = '❌ 相機啟動被中斷';
+                } else {
+                    errorMessage = `❌ 相機啟動失敗：${error.message || error.name}`;
+                }
+                
+                MessageHandler.show(errorMessage, 'error');
+                
+                // 顯示權限幫助信息
+                if (showPermissionHelp) {
+                    setTimeout(() => {
+                        this.showPermissionHelp();
+                    }, 1000);
+                }
+                
+                // 如果是嚴重錯誤，隱藏相機控制項
+                if (error.name === 'NotFoundError' || error.name === 'SecurityError') {
+                    setTimeout(() => {
+                        this.hideCameraControls();
+                    }, 3000);
+                }
+            }
+
+            showPermissionHelp() {
+                const helpMessage = `
+                    🔧 如何啟用相機權限：
+                    
+                    Chrome/Edge：
+                    1. 點擊網址列左側的鎖頭圖示
+                    2. 將相機設為「允許」
+                    3. 重新整理頁面
+                    
+                    Firefox：
+                    1. 點擊網址列左側的盾牌圖示
+                    2. 點擊「權限」
+                    3. 啟用相機權限
+                    
+                    Safari：
+                    1. 在選單中選擇「網站」→「相機」
+                    2. 選擇「允許」
+                `;
+                
+                // 創建幫助對話框
+                this.showCameraHelpDialog(helpMessage);
+            }
+
+            showCameraHelpDialog(message) {
+                const modal = document.createElement('div');
+                modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+                modal.innerHTML = `
+                    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full">
+                        <h3 class="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">相機權限設定說明</h3>
+                        <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line mb-6">${message}</div>
+                        <div class="flex justify-end space-x-3">
+                            <button onclick="this.closest('.fixed').remove()" 
+                                    class="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+                                關閉
+                            </button>
+                            <button onclick="window.location.reload()" 
+                                    class="px-4 py-2 bg-primary text-white hover:bg-blue-600 rounded-lg">
+                                重新整理頁面
+                            </button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }
+
+            stopCamera() {
+                try {
+                    if (this.scanner) {
+                        this.scanner.stop();
+                        this.scanner.destroy();
+                        this.scanner = null;
+                    }
+
+                    // Update UI
                     const video = document.getElementById('qr-video');
                     const overlay = document.querySelector('.scanner-overlay');
                     const startBtn = document.getElementById('startCameraBtn');
                     const stopBtn = document.getElementById('stopCameraBtn');
                     const switchBtn = document.getElementById('switchCameraBtn');
 
-                    this.scanner = new QrScanner(
-                        video,
-                        (result) => this.handleScanResult(result),
-                        CONFIG.QR_SCANNER_OPTIONS
-                    );
+                    video.classList.add('hidden');
+                    overlay.classList.add('hidden');
+                    startBtn.classList.remove('hidden');
+                    startBtn.textContent = '📷 啟動相機掃描';
+                    startBtn.disabled = false;
+                    stopBtn.classList.add('hidden');
+                    switchBtn.classList.add('hidden');
 
-                    await this.scanner.start();
-                    
-                    // Update UI
-                    video.classList.remove('hidden');
-                    overlay.classList.remove('hidden');
-                    startBtn.classList.add('hidden');
-                    stopBtn.classList.remove('hidden');
-                    switchBtn.classList.remove('hidden');
-                    
-                    this.isScanning = true;
-                    MessageHandler.show('相機已啟動，請將QR code對準掃描區域', 'success');
-                    
+                    this.isScanning = false;
+                    MessageHandler.show('相機已停止', 'info');
                 } catch (error) {
-                    console.error('Camera access failed:', error);
-                    MessageHandler.show('無法啟動相機，請檢查權限設定或使用圖片上傳功能', 'error');
+                    console.error('Error stopping camera:', error);
                 }
-            }
-
-            stopCamera() {
-                if (this.scanner) {
-                    this.scanner.stop();
-                    this.scanner.destroy();
-                    this.scanner = null;
-                }
-
-                // Update UI
-                const video = document.getElementById('qr-video');
-                const overlay = document.querySelector('.scanner-overlay');
-                const startBtn = document.getElementById('startCameraBtn');
-                const stopBtn = document.getElementById('stopCameraBtn');
-                const switchBtn = document.getElementById('switchCameraBtn');
-
-                video.classList.add('hidden');
-                overlay.classList.add('hidden');
-                startBtn.classList.remove('hidden');
-                stopBtn.classList.add('hidden');
-                switchBtn.classList.add('hidden');
-
-                this.isScanning = false;
-                MessageHandler.show('相機已停止', 'info');
             }
 
             async switchCamera() {
-                if (this.scanner) {
-                    try {
-                        await this.scanner.setCamera('environment');
-                        MessageHandler.show('已切換相機', 'info');
-                    } catch (error) {
-                        console.error('Switch camera failed:', error);
-                        MessageHandler.show('切換相機失敗', 'error');
-                    }
+                if (!this.scanner || this.cameras.length <= 1) {
+                    return;
+                }
+
+                try {
+                    this.currentCameraIndex = (this.currentCameraIndex + 1) % this.cameras.length;
+                    const currentCamera = this.cameras[this.currentCameraIndex];
+                    
+                    await this.scanner.setCamera(currentCamera.deviceId);
+                    MessageHandler.show(`已切換到：${currentCamera.label || '相機 ' + (this.currentCameraIndex + 1)}`, 'info');
+                } catch (error) {
+                    console.error('Switch camera failed:', error);
+                    MessageHandler.show('切換相機失敗', 'error');
                 }
             }
 
